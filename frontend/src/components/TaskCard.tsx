@@ -1,5 +1,6 @@
 import React from 'react';
 import { Task } from '../lib/supabase';
+
 import { 
   MapPin, 
   Calendar, 

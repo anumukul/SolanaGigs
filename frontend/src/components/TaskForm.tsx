@@ -2,36 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { TaskService } from '../lib/supabase';
 import { useSolanaWallet } from '../hooks/useSolanaWallet';
 import { useWeb3Auth } from '@web3auth/modal/react';
-import { 
-  Upload, 
-  MapPin, 
-  Calendar, 
-  DollarSign, 
-  FileText, 
-  Tag,
-  Mail,
-  Loader
-} from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
-const TASK_CATEGORIES = [
-  'Development',
-  'Design',
-  'Writing',
-  'Marketing',
-  'Data Entry',
-  'Translation',
-  'Consulting',
-  'Physical Tasks',
-  'Other'
-];
-
-interface TaskFormProps {
-  onTaskCreated?: (taskId: string) => void;
-}
-
-export const TaskForm: React.FC<TaskFormProps> = ({ onTaskCreated }) => {
-  const { user } = useWeb3Auth();
-  const { publicKey } = useSolanaWallet();
+export const TaskForm: React.FC = () => {
+  const navigate = useNavigate();
+  const { isConnected, user } = useWeb3Auth();
+  const { accounts, publicKey, balance } = useSolanaWallet();
   
   const [formData, setFormData] = useState({
     title: '',
@@ -43,94 +19,58 @@ export const TaskForm: React.FC<TaskFormProps> = ({ onTaskCreated }) => {
     contact_info: '',
   });
 
-  const [coordinates, setCoordinates] = useState<{lat: number, lng: number} | null>(null);
-  const [selectedImage, setSelectedImage] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [error, setError] = useState('');
 
-  // Auto-detect location
+  // Debug logging
   useEffect(() => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setCoordinates({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          });
-        },
-        (error) => {
-          console.log('Geolocation error:', error);
-        }
-      );
-    }
-  }, []);
+    console.log('=== TASKFORM DEBUG ===');
+    console.log('Web3Auth isConnected:', isConnected);
+    console.log('Web3Auth user:', user);
+    console.log('Solana accounts:', accounts);
+    console.log('Solana publicKey:', publicKey);
+    console.log('Solana balance:', balance);
+    console.log('=====================');
+  }, [isConnected, user, accounts, publicKey, balance]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-    
-    // Clear error when user starts typing
-    if (errors[name]) {
-      setErrors(prev => ({ ...prev, [name]: '' }));
-    }
-  };
-
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setSelectedImage(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const validateForm = () => {
-    const newErrors: Record<string, string> = {};
-
-    if (!formData.title.trim()) newErrors.title = 'Title is required';
-    if (!formData.description.trim()) newErrors.description = 'Description is required';
-    if (!formData.reward || parseFloat(formData.reward) <= 0) {
-      newErrors.reward = 'Reward must be greater than 0';
-    }
-    if (!formData.category) newErrors.category = 'Category is required';
-    if (!publicKey) newErrors.general = 'Wallet must be connected';
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!validateForm()) return;
+    // Check connection using both methods
+    if (!isConnected || !accounts || accounts.length === 0) {
+      setError('Please connect your wallet first');
+      return;
+    }
 
-    setIsSubmitting(true);
+    if (!formData.title || !formData.description || !formData.reward || !formData.category) {
+      setError('Please fill in all required fields');
+      return;
+    }
 
     try {
-      let imageUrl = '';
-      
-      // Upload image if selected
-      if (selectedImage) {
-        imageUrl = await TaskService.uploadImage(selectedImage);
-      }
+      setIsSubmitting(true);
+      setError('');
 
-      // Create task
-      const task = await TaskService.createTask({
+      // Use accounts[0] as the wallet address
+      const walletAddress = accounts[0];
+
+      await TaskService.createTask({
         title: formData.title,
         description: formData.description,
         reward: parseFloat(formData.reward),
         category: formData.category,
         location: formData.location || undefined,
-        latitude: coordinates?.lat,
-        longitude: coordinates?.lng,
         deadline: formData.deadline || undefined,
         contact_info: formData.contact_info || undefined,
-        image_url: imageUrl || undefined,
-        poster_wallet: publicKey!.toBase58(),
+        poster_wallet: walletAddress, // Use accounts[0] instead of publicKey.toBase58()
         poster_email: user?.email,
         status: 'open'
       });
@@ -145,14 +85,13 @@ export const TaskForm: React.FC<TaskFormProps> = ({ onTaskCreated }) => {
         deadline: '',
         contact_info: '',
       });
-      setSelectedImage(null);
-      setImagePreview('');
-      
-      onTaskCreated?.(task.id);
 
-    } catch (error) {
-      console.error('Error creating task:', error);
-      setErrors({ general: 'Failed to create task. Please try again.' });
+      alert('Task created successfully!');
+      navigate('/browse');
+
+    } catch (err) {
+      console.error('Error creating task:', err);
+      setError('Failed to create task. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -160,21 +99,16 @@ export const TaskForm: React.FC<TaskFormProps> = ({ onTaskCreated }) => {
 
   return (
     <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">Post a New Task</h2>
-        <p className="text-gray-600">
-          Create a task and get help from skilled professionals in the community.
-        </p>
-      </div>
-
-      {errors.general && (
-        <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
-          <p className="text-red-800 text-sm">{errors.general}</p>
+      <h2 className="text-2xl font-bold text-gray-900 mb-6">Post a New Task</h2>
+      
+      {error && (
+        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-4">
+          <p className="text-red-800 text-sm">{error}</p>
         </div>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Title */}
+        {/* Task Title */}
         <div>
           <label htmlFor="title" className="block text-sm font-medium text-gray-700 mb-2">
             Task Title *
@@ -184,13 +118,11 @@ export const TaskForm: React.FC<TaskFormProps> = ({ onTaskCreated }) => {
             id="title"
             name="title"
             value={formData.title}
-            onChange={handleInputChange}
-            placeholder="e.g., Fix responsive design bug on mobile"
-            className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 ${
-              errors.title ? 'border-red-300' : 'border-gray-300'
-            }`}
+            onChange={handleChange}
+            required
+            placeholder="e.g., Build a React component"
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 placeholder-gray-500"
           />
-          {errors.title && <p className="mt-1 text-sm text-red-600">{errors.title}</p>}
         </div>
 
         {/* Description */}
@@ -201,64 +133,57 @@ export const TaskForm: React.FC<TaskFormProps> = ({ onTaskCreated }) => {
           <textarea
             id="description"
             name="description"
-            rows={4}
             value={formData.description}
-            onChange={handleInputChange}
-            placeholder="Provide detailed information about what needs to be done..."
-            className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 ${
-              errors.description ? 'border-red-300' : 'border-gray-300'
-            }`}
+            onChange={handleChange}
+            required
+            rows={4}
+            placeholder="Describe what needs to be done..."
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 placeholder-gray-500"
           />
-          {errors.description && <p className="mt-1 text-sm text-red-600">{errors.description}</p>}
         </div>
 
-        {/* Reward and Category Row */}
+        {/* Reward and Category */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <label htmlFor="reward" className="block text-sm font-medium text-gray-700 mb-2">
               Reward (SOL) *
             </label>
-            <div className="relative">
-              <DollarSign className="absolute left-3 top-3.5 w-5 h-5 text-gray-400" />
-              <input
-                type="number"
-                id="reward"
-                name="reward"
-                step="0.001"
-                min="0"
-                value={formData.reward}
-                onChange={handleInputChange}
-                placeholder="0.1"
-                className={`w-full pl-10 pr-4 py-3 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 ${
-                  errors.reward ? 'border-red-300' : 'border-gray-300'
-                }`}
-              />
-            </div>
-            {errors.reward && <p className="mt-1 text-sm text-red-600">{errors.reward}</p>}
+            <input
+              type="number"
+              id="reward"
+              name="reward"
+              value={formData.reward}
+              onChange={handleChange}
+              required
+              step="0.001"
+              min="0"
+              placeholder="0.1"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 placeholder-gray-500"
+            />
           </div>
 
           <div>
             <label htmlFor="category" className="block text-sm font-medium text-gray-700 mb-2">
               Category *
             </label>
-            <div className="relative">
-              <Tag className="absolute left-3 top-3.5 w-5 h-5 text-gray-400" />
-              <select
-                id="category"
-                name="category"
-                value={formData.category}
-                onChange={handleInputChange}
-                className={`w-full pl-10 pr-4 py-3 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 ${
-                  errors.category ? 'border-red-300' : 'border-gray-300'
-                }`}
-              >
-                <option value="">Select a category</option>
-                {TASK_CATEGORIES.map(category => (
-                  <option key={category} value={category}>{category}</option>
-                ))}
-              </select>
-            </div>
-            {errors.category && <p className="mt-1 text-sm text-red-600">{errors.category}</p>}
+            <select
+              id="category"
+              name="category"
+              value={formData.category}
+              onChange={handleChange}
+              required
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900"
+            >
+              <option value="">Select a category</option>
+              <option value="Development">Development</option>
+              <option value="Design">Design</option>
+              <option value="Writing">Writing</option>
+              <option value="Marketing">Marketing</option>
+              <option value="Data Entry">Data Entry</option>
+              <option value="Translation">Translation</option>
+              <option value="Consulting">Consulting</option>
+              <option value="Other">Other</option>
+            </select>
           </div>
         </div>
 
@@ -267,18 +192,15 @@ export const TaskForm: React.FC<TaskFormProps> = ({ onTaskCreated }) => {
           <label htmlFor="location" className="block text-sm font-medium text-gray-700 mb-2">
             Location (Optional)
           </label>
-          <div className="relative">
-            <MapPin className="absolute left-3 top-3.5 w-5 h-5 text-gray-400" />
-            <input
-              type="text"
-              id="location"
-              name="location"
-              value={formData.location}
-              onChange={handleInputChange}
-              placeholder="City, State or 'Remote'"
-              className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-            />
-          </div>
+          <input
+            type="text"
+            id="location"
+            name="location"
+            value={formData.location}
+            onChange={handleChange}
+            placeholder="City, State or 'Remote'"
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 placeholder-gray-500"
+          />
         </div>
 
         {/* Deadline and Contact */}
@@ -287,104 +209,50 @@ export const TaskForm: React.FC<TaskFormProps> = ({ onTaskCreated }) => {
             <label htmlFor="deadline" className="block text-sm font-medium text-gray-700 mb-2">
               Deadline (Optional)
             </label>
-            <div className="relative">
-              <Calendar className="absolute left-3 top-3.5 w-5 h-5 text-gray-400" />
-              <input
-                type="datetime-local"
-                id="deadline"
-                name="deadline"
-                value={formData.deadline}
-                onChange={handleInputChange}
-                className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              />
-            </div>
+            <input
+              type="datetime-local"
+              id="deadline"
+              name="deadline"
+              value={formData.deadline}
+              onChange={handleChange}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900"
+            />
           </div>
 
           <div>
             <label htmlFor="contact_info" className="block text-sm font-medium text-gray-700 mb-2">
               Contact Info (Optional)
             </label>
-            <div className="relative">
-              <Mail className="absolute left-3 top-3.5 w-5 h-5 text-gray-400" />
-              <input
-                type="text"
-                id="contact_info"
-                name="contact_info"
-                value={formData.contact_info}
-                onChange={handleInputChange}
-                placeholder="Email, Discord, etc."
-                className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Image Upload */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Task Image (Optional)
-          </label>
-          <div className="border-2 border-dashed border-gray-300 rounded-lg p-6">
-            {imagePreview ? (
-              <div className="text-center">
-                <img
-                  src={imagePreview}
-                  alt="Preview"
-                  className="mx-auto h-32 w-32 object-cover rounded-lg mb-4"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedImage(null);
-                    setImagePreview('');
-                  }}
-                  className="text-sm text-gray-600 hover:text-gray-800"
-                >
-                  Remove image
-                </button>
-              </div>
-            ) : (
-              <div className="text-center">
-                <Upload className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-                <label htmlFor="image" className="cursor-pointer">
-                  <span className="text-sm font-medium text-primary-600 hover:text-primary-500">
-                    Upload an image
-                  </span>
-                  <input
-                    id="image"
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageChange}
-                    className="hidden"
-                  />
-                </label>
-                <p className="text-xs text-gray-500 mt-2">PNG, JPG, GIF up to 10MB</p>
-              </div>
-            )}
+            <input
+              type="text"
+              id="contact_info"
+              name="contact_info"
+              value={formData.contact_info}
+              onChange={handleChange}
+              placeholder="Email, Discord, etc."
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 placeholder-gray-500"
+            />
           </div>
         </div>
 
         {/* Submit Button */}
-        <div className="pt-6">
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
-          >
-            {isSubmitting ? (
-              <>
-                <Loader className="w-5 h-5 animate-spin" />
-                <span>Creating Task...</span>
-              </>
-            ) : (
-              <>
-                <FileText className="w-5 h-5" />
-                <span>Create Task</span>
-              </>
-            )}
-          </button>
-        </div>
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="w-full bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {isSubmitting ? 'Creating Task...' : 'Create Task'}
+        </button>
       </form>
+      
+      {/* Debug Info */}
+      <div className="mt-4 p-4 bg-gray-50 rounded-lg text-xs">
+        <p>Debug - Form Data: {JSON.stringify(formData)}</p>
+        <p>Debug - Web3Auth Connected: {isConnected ? 'Yes' : 'No'}</p>
+        <p>Debug - Solana Accounts: {accounts?.length || 0}</p>
+        <p>Debug - First Account: {accounts?.[0] || 'None'}</p>
+        <p>Debug - PublicKey: {publicKey ? 'Yes' : 'No'}</p>
+      </div>
     </div>
   );
 };
